@@ -96,8 +96,12 @@ jobs:
           PYEOF
 
       # 4. 赋权并编译 Release APK
+      - name: Setup Gradle Wrapper
+        uses: gradle/actions/setup-gradle@v3
+
       - name: Build Release APK
         run: |
+          gradle wrapper --gradle-version 8.7 --distribution-type bin
           chmod +x gradlew
           ./gradlew assembleRelease \
             --build-cache \
