@@ -25,7 +25,6 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
       # 3. 注入签名配置
       #    签名文件 TVBoxOSC.jks 和密码通过 GitHub Secrets 传入
