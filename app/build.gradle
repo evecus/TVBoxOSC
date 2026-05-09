@@ -50,7 +50,7 @@ android {
         config {
             keyAlias 'TVBoxOSC'
             keyPassword 'TVBoxOSC'
-            storeFile file('..\\TVBoxOSC.jks')
+            storeFile file('../TVBoxOSC.jks')
             storePassword 'TVBoxOSC'
         }
     }
