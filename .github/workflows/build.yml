@@ -1,0 +1,131 @@
+name: Build MBox APK
+
+on:
+  # 手动触发
+  workflow_dispatch:
+  # 推送到 main 分支时自动触发（可取消注释）
+  # push:
+  #   branches:
+  #     - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 检出当前仓库代码
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. 配置 Java 17（AGP 8.x 要求）
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      # 3. 注入签名配置
+      #    签名文件 TVBoxOSC.jks 和密码通过 GitHub Secrets 传入
+      #    在仓库 Settings → Secrets and variables → Actions 中添加：
+      #      KEYSTORE_FILE   : jks 文件的 base64 编码内容
+      #      KEY_ALIAS       : 签名别名（例如 TVBoxOSC）
+      #      KEY_PASSWORD    : key 密码
+      #      STORE_PASSWORD  : keystore 密码
+      - name: Inject signing config
+        env:
+          KEYSTORE_FILE: ${{ secrets.KEYSTORE_FILE }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+        run: |
+          # 将 base64 编码的 keystore 文件解码到 app 目录
+          echo "$KEYSTORE_FILE" | base64 -d > ${{ github.workspace }}/app/TVBoxOSC.jks
+
+          # 写入签名属性到 gradle.properties
+          echo "" >> gradle.properties
+          echo "RELEASE_STORE_FILE=./TVBoxOSC.jks" >> gradle.properties
+          echo "RELEASE_KEY_ALIAS=$KEY_ALIAS" >> gradle.properties
+          echo "RELEASE_STORE_PASSWORD=$STORE_PASSWORD" >> gradle.properties
+          echo "RELEASE_KEY_PASSWORD=$KEY_PASSWORD" >> gradle.properties
+
+          # 在 app/build.gradle 中将 signingConfigs 替换为读取 gradle.properties 的版本
+          # 使用 Python 进行精准替换，避免 sed 处理多行时出错
+          python3 - <<'PYEOF'
+          import re
+
+          with open('app/build.gradle', 'r') as f:
+              content = f.read()
+
+          # 替换 signingConfigs 块
+          new_signing_configs = '''    signingConfigs {
+              if (project.hasProperty("RELEASE_STORE_FILE")) {
+                  myConfig {
+                      storeFile file(RELEASE_STORE_FILE)
+                      storePassword RELEASE_STORE_PASSWORD
+                      keyAlias RELEASE_KEY_ALIAS
+                      keyPassword RELEASE_KEY_PASSWORD
+                      v1SigningEnabled true
+                      v2SigningEnabled true
+                      enableV3Signing = true
+                      enableV4Signing = true
+                  }
+              }
+          }'''
+
+          # 替换原有 signingConfigs 块（从 signingConfigs { 到对应闭合 }）
+          content = re.sub(
+              r'signingConfigs \{[^}]*config \{[^}]*\}[^}]*\}',
+              new_signing_configs,
+              content,
+              flags=re.DOTALL
+          )
+
+          # 替换 buildTypes 中 signingConfig signingConfigs.config → signingConfigs.myConfig
+          content = content.replace(
+              'signingConfig signingConfigs.config',
+              'if (project.hasProperty("RELEASE_STORE_FILE")) { signingConfig signingConfigs.myConfig }'
+          )
+
+          with open('app/build.gradle', 'w') as f:
+              f.write(content)
+
+          print("Signing config injected successfully.")
+          PYEOF
+
+      # 4. 赋权并编译 Release APK
+      - name: Build Release APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease \
+            --build-cache \
+            --parallel \
+            --daemon \
+            --warning-mode all \
+            --stacktrace
+
+      # 5. 收集 APK 文件
+      - name: Collect APK
+        run: |
+          mkdir -p ${{ github.workspace }}/apk/
+          find . -name "*.apk" -exec mv {} ${{ github.workspace }}/apk/ \;
+          ls -lh ${{ github.workspace }}/apk/
+
+      # 6. 上传到 Artifacts（Actions 页面可下载）
+      - name: Upload APK to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MBox-${{ github.run_number }}
+          path: ${{ github.workspace }}/apk/*.apk
+          retention-days: 30
+
+      # 7. （可选）发布到 GitHub Releases，取消注释即生效
+      # - name: Create Release
+      #   uses: softprops/action-gh-release@v2
+      #   with:
+      #     tag_name: v1.2.${{ github.run_number }}
+      #     name: MBox v1.2.${{ github.run_number }}
+      #     files: ${{ github.workspace }}/apk/*.apk
+      #     generate_release_notes: true
